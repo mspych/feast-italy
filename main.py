@@ -11,7 +11,7 @@ import sys
 import config  # noqa: F401 — ensures env vars are loaded early
 from scraper import fetch_price
 from airtable_client import (
-    get_all_products,
+    get_monitored_products,
     update_product,
     log_price_check,
 )
@@ -84,11 +84,11 @@ def main() -> None:
     """Run the price check for all products in Airtable."""
     log.info("=== Feast Italy Price Monitor ===")
 
-    products = get_all_products()
-    log.info("Found %d product(s) to check.", len(products))
+    products = get_monitored_products()
+    log.info("Found %d monitored product(s) to check.", len(products))
 
     if not products:
-        log.warning("No products found in Airtable. Add products to the '%s' table.", config.PRODUCTS_TABLE)
+        log.warning("No monitored products found. Tick the 'Monitor' checkbox in the '%s' table.", config.PRODUCTS_TABLE)
         return
 
     errors = 0

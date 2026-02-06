@@ -30,12 +30,46 @@ def get_all_products() -> list[dict]:
     return _products_table().all()
 
 
+def get_monitored_products() -> list[dict]:
+    """Return only products where the Monitor checkbox is checked."""
+    return _products_table().all(formula="{Monitor}")
+
+
 def get_product_by_handle(handle: str) -> Optional[dict]:
     """Find a single product by its Shopify Handle field."""
     records = _products_table().all(
         formula=f"{{Shopify Handle}} = '{handle}'"
     )
     return records[0] if records else None
+
+
+def upsert_product(name: str, handle: str, url: str, price: float, vendor: str = "") -> dict:
+    """Create a product if it doesn't exist, or return the existing record.
+
+    New products are created with Monitor unchecked so the user can opt in.
+    """
+    existing = get_product_by_handle(handle)
+    if existing:
+        return existing
+
+    fields = {
+        "Name": name,
+        "Shopify Handle": handle,
+        "URL": url,
+        "Current Price": price,
+    }
+    if vendor:
+        fields["Vendor"] = vendor
+
+    try:
+        return _products_table().create(fields)
+    except Exception:
+        # If some fields don't exist in the table, try with just the essentials
+        return _products_table().create({
+            "Name": name,
+            "Shopify Handle": handle,
+            "URL": url,
+        })
 
 
 def _format_date(dt: datetime) -> str:
