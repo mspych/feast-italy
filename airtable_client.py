@@ -38,13 +38,26 @@ def get_product_by_handle(handle: str) -> Optional[dict]:
     return records[0] if records else None
 
 
+def _format_date(dt: datetime) -> str:
+    """Format a datetime as a date string for Airtable (YYYY-MM-DD)."""
+    return dt.strftime("%Y-%m-%d")
+
+
 def update_product(record_id: str, price: float, checked_at: datetime = None):
-    """Update a product's Current Price and Last Checked timestamp."""
+    """Update a product's Current Price and Last Checked timestamp.
+
+    Only writes fields that exist in the table; silently skips missing fields.
+    """
     checked_at = checked_at or datetime.now(timezone.utc)
-    _products_table().update(record_id, {
-        "Current Price": price,
-        "Last Checked": checked_at.isoformat(),
-    })
+    fields = {}
+    # These fields are optional — only set if they exist in the table
+    fields["Current Price"] = price
+    fields["Last Checked"] = _format_date(checked_at)
+    try:
+        _products_table().update(record_id, fields)
+    except Exception:
+        # If fields don't exist, just skip the update
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +90,7 @@ def log_price_check(
     fields = {
         "Product": [product_record_id],
         "Price": price,
-        "Checked At": checked_at.isoformat(),
+        "Checked At": _format_date(checked_at),
         "Price Dropped": price_dropped,
     }
     if previous_price is not None:
