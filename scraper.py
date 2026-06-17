@@ -109,6 +109,8 @@ def fetch_price(handle: str, domain: str = None) -> ProductPrice:
     variant = product["variants"][0]
 
     compare_at = variant.get("compare_at_price")
+    inventory_quantity = int(variant.get("inventory_quantity") or 0)
+    available = bool(variant.get("available", inventory_quantity > 0))
 
     image_url = None
     if product.get("image") and product["image"].get("src"):
@@ -120,7 +122,7 @@ def fetch_price(handle: str, domain: str = None) -> ProductPrice:
         price=float(variant["price"]),
         compare_at_price=float(compare_at) if compare_at else None,
         currency=variant.get("price_currency", "GBP"),
-        available=variant.get("inventory_quantity", 0) > 0,
-        inventory_quantity=variant.get("inventory_quantity", 0),
+        available=available,
+        inventory_quantity=inventory_quantity,
         image_url=image_url,
     )

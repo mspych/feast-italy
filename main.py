@@ -83,6 +83,7 @@ def check_product(record: dict) -> None:
 def main() -> None:
     """Run the price check for all products in Airtable."""
     log.info("=== Feast Italy Price Monitor ===")
+    config.validate_required_config()
 
     products = get_monitored_products()
     log.info("Found %d monitored product(s) to check.", len(products))
@@ -107,4 +108,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except config.ConfigError as exc:
+        log.error("%s", exc)
+        sys.exit(2)

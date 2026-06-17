@@ -1,14 +1,18 @@
 """Airtable read/write helpers for Products and Price History tables."""
 
 from datetime import datetime, timezone
+import logging
 from typing import Optional
 
 from pyairtable import Api
 
 import config
 
+log = logging.getLogger(__name__)
+
 
 def _get_api() -> Api:
+    config.validate_required_config()
     return Api(config.AIRTABLE_API_KEY)
 
 
@@ -37,20 +41,30 @@ def get_monitored_products() -> list[dict]:
 
 def get_product_by_handle(handle: str) -> Optional[dict]:
     """Find a single product by its Shopify Handle field."""
+    escaped_handle = handle.replace("'", "\\'")
     records = _products_table().all(
-        formula=f"{{Shopify Handle}} = '{handle}'"
+        formula=f"{{Shopify Handle}} = '{escaped_handle}'"
     )
     return records[0] if records else None
 
 
-def upsert_product(name: str, handle: str, url: str, price: float, vendor: str = "") -> dict:
+def upsert_product(
+    name: str,
+    handle: str,
+    url: str,
+    price: float,
+    vendor: str = "",
+) -> tuple[dict, bool]:
     """Create a product if it doesn't exist, or return the existing record.
 
     New products are created with Monitor unchecked so the user can opt in.
+
+    Returns:
+        A tuple of (record, created).
     """
     existing = get_product_by_handle(handle)
     if existing:
-        return existing
+        return existing, False
 
     fields = {
         "Name": name,
@@ -62,14 +76,14 @@ def upsert_product(name: str, handle: str, url: str, price: float, vendor: str =
         fields["Vendor"] = vendor
 
     try:
-        return _products_table().create(fields)
+        return _products_table().create(fields), True
     except Exception:
         # If some fields don't exist in the table, try with just the essentials
         return _products_table().create({
             "Name": name,
             "Shopify Handle": handle,
             "URL": url,
-        })
+        }), True
 
 
 def _format_date(dt: datetime) -> str:
@@ -89,9 +103,8 @@ def update_product(record_id: str, price: float, checked_at: datetime = None):
     fields["Last Checked"] = _format_date(checked_at)
     try:
         _products_table().update(record_id, fields)
-    except Exception:
-        # If fields don't exist, just skip the update
-        pass
+    except Exception as exc:
+        log.warning("Could not update product %s: %s", record_id, exc)
 
 
 # ---------------------------------------------------------------------------
