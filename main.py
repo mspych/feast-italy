@@ -112,4 +112,6 @@ if __name__ == "__main__":
         main()
     except config.ConfigError as exc:
         log.error("%s", exc)
-        sys.exit(2)
+        # Treat missing setup as a clean no-op in Railway so the one-shot
+        # worker does not restart forever while secrets are being configured.
+        sys.exit(0)
