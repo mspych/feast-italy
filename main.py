@@ -107,11 +107,39 @@ def main() -> None:
         sys.exit(1)
 
 
+def check_config() -> None:
+    """Validate required env vars and Shopify connectivity (preflight)."""
+    config.validate_required_config()
+    log.info("Config OK: Airtable base %s", config.AIRTABLE_BASE_ID)
+    # Light Shopify reachability check via a known product handle shape
+    from scraper import fetch_collection_products
+
+    products = fetch_collection_products("short-dated-but-delicious")
+    log.info(
+        "Shopify OK: %s — %d product(s) in short-dated-but-delicious",
+        config.SHOPIFY_STORE_DOMAIN,
+        len(products),
+    )
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] in {"--check-config", "check-config"}:
+        try:
+            check_config()
+        except config.ConfigError as exc:
+            log.error("%s", exc)
+            sys.exit(2)
+        except Exception as exc:
+            log.error("Preflight failed: %s", exc, exc_info=True)
+            sys.exit(1)
+        else:
+            log.info("Preflight passed.")
+            sys.exit(0)
+
     try:
         main()
     except config.ConfigError as exc:
         log.error("%s", exc)
-        # Treat missing setup as a clean no-op in Railway so the one-shot
-        # worker does not restart forever while secrets are being configured.
-        sys.exit(0)
+        # Missing config is a real deployment failure. restartPolicyType=NEVER
+        # prevents Railway restart loops for this one-shot worker.
+        sys.exit(2)

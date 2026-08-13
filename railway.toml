@@ -1,7 +1,8 @@
 [build]
 builder = "NIXPACKS"
 
-# Cron disabled — worker paused on Railway (2026-06-03).
-# To resume: restore cronSchedule under [deploy], e.g. "0 */6 * * *"
 [deploy]
+# One-shot cron worker: run and exit; do not restart on failure.
 restartPolicyType = "NEVER"
+# Every 6 hours at minute 0
+cronSchedule = "0 */6 * * *"
