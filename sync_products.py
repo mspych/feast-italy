@@ -4,8 +4,8 @@ Usage:
     python sync_products.py [collection-handle]
 
 Defaults to "short-dated-but-delicious" if no handle is provided.
-New products are added with Monitor unchecked — tick it in Airtable
-to start tracking their prices.
+New products are added with Monitor checked so later scans can detect
+a further markdown against this first-seen price.
 """
 
 import logging

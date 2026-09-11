@@ -29,6 +29,9 @@ Set these on the **`feast-italy`** Railway service (Variables tab):
 | `AIRTABLE_PRODUCTS_TABLE` | no | Default: `Products` |
 | `AIRTABLE_PRICE_HISTORY_TABLE` | no | Default: `Price History` |
 | `SHOPIFY_STORE_DOMAIN` | no | Default: `feastitaly.com` |
+| `SHOPIFY_COLLECTION_HANDLE` | no | Default: `short-dated-but-delicious` |
+| `SIGNIFICANT_DROP_PERCENT` | no | Default: `5` (must also meet amount) |
+| `SIGNIFICANT_DROP_AMOUNT` | no | Default: `0.50` (GBP; must also meet percent) |
 
 Do **not** commit secrets. Copy from Railway dashboard or a local `.env` (gitignored).
 
@@ -48,7 +51,8 @@ railway run python main.py --check-config
 railway up
 ```
 
-Cron schedule (from `railway.toml`): `0 */6 * * *` (every 6 hours).  
+Cron schedule (from `railway.toml`): `0 8,16 * * *` — **08:00 and 16:00 UTC** (morning and afternoon).  
+Each run scans [short-dated-but-delicious](https://feastitaly.com/collections/short-dated-but-delicious), adds new products at their first-seen price, and flags **Further Reduction** on products already in Airtable when the sale price drops by at least **5% and £0.50**.  
 Restart policy: `NEVER` (one-shot worker; failures must not loop).
 
 ## Stop / pause

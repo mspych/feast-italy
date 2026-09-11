@@ -1,17 +1,19 @@
 """Feast Italy Price Drop Monitor.
 
-Entry point: fetches prices for all products in the Airtable Products table,
-logs each check to Price History, and flags price drops so Airtable automations
-can handle notifications.
+Twice a day, scan the short-dated Shopify collection, add any new products
+to Airtable at their first-seen price, and flag existing products when the
+sale price drops again by a significant amount.
 """
 
 import logging
 import sys
 
-import config  # noqa: F401 — ensures env vars are loaded early
-from scraper import fetch_price
+import config
+from scraper import fetch_collection_products
+from pricing import drop_amount, drop_percent, is_significant_drop
 from airtable_client import (
-    get_monitored_products,
+    products_by_handle,
+    upsert_product,
     update_product,
     log_price_check,
 )
@@ -24,84 +26,147 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def check_product(record: dict) -> None:
-    """Check a single product for price changes.
+def scan_collection_product(product, existing: dict | None) -> str:
+    """Compare one collection product against the Airtable record.
 
-    Args:
-        record: An Airtable record dict from the Products table.
+    Returns:
+        One of: "added", "further_reduction", "checked".
     """
-    fields = record["fields"]
-    name = fields.get("Name", "Unknown")
-    handle = fields.get("Shopify Handle")
-    previous_price = fields.get("Current Price")
-
-    if not handle:
-        log.warning("Skipping product '%s' — no Shopify Handle set.", name)
-        return
-
-    # 1. Fetch current price from Shopify
-    log.info("Checking price for: %s", name)
-    price_data = fetch_price(handle)
-    current_price = price_data.price
-
-    log.info(
-        "  %s — current: %s%.2f | previous: %s",
-        name,
-        price_data.currency,
-        current_price,
-        f"{price_data.currency}{previous_price:.2f}" if previous_price else "first check",
-    )
-
-    # 2. Determine if the price dropped
-    price_dropped = (
-        previous_price is not None and current_price < previous_price
-    )
-
-    if price_dropped:
-        log.info(
-            "  PRICE DROP detected! %s%.2f -> %s%.2f",
-            price_data.currency, previous_price,
-            price_data.currency, current_price,
+    if existing is None:
+        record, _created = upsert_product(
+            name=product.title,
+            handle=product.handle,
+            url=product.url,
+            price=product.price,
+            vendor=product.vendor,
+            monitor=True,
         )
-    elif previous_price is None:
-        log.info("  First check recorded.")
-    else:
-        log.info("  No price change.")
+        log_price_check(
+            product_record_id=record["id"],
+            price=product.price,
+            previous_price=None,
+            price_dropped=False,
+        )
+        log.info(
+            "  [added] %s — first seen at %s%.2f",
+            product.title,
+            product.currency,
+            product.price,
+        )
+        return "added"
 
-    # 3. Log to Price History table (Airtable automation will handle email if Price Dropped is true)
+    previous_price = existing.get("fields", {}).get("Current Price")
+    current_price = product.price
+    amount = drop_amount(previous_price, current_price)
+    percent = drop_percent(previous_price, current_price)
+    significant = is_significant_drop(
+        previous_price,
+        current_price,
+        min_percent=config.SIGNIFICANT_DROP_PERCENT,
+        min_amount=config.SIGNIFICANT_DROP_AMOUNT,
+    )
+
+    if previous_price is None:
+        log.info(
+            "  [baseline] %s — recording %s%.2f",
+            product.title,
+            product.currency,
+            current_price,
+        )
+    elif significant:
+        log.info(
+            "  [further reduction] %s — %s%.2f -> %s%.2f (%.1f%% / %s%.2f)",
+            product.title,
+            product.currency,
+            previous_price,
+            product.currency,
+            current_price,
+            percent or 0.0,
+            product.currency,
+            amount or 0.0,
+        )
+    elif amount is not None and amount > 0:
+        log.info(
+            "  [small drop] %s — %s%.2f -> %s%.2f (below threshold)",
+            product.title,
+            product.currency,
+            previous_price,
+            product.currency,
+            current_price,
+        )
+    else:
+        log.info(
+            "  [checked] %s — still %s%.2f",
+            product.title,
+            product.currency,
+            current_price,
+        )
+
     log_price_check(
-        product_record_id=record["id"],
+        product_record_id=existing["id"],
         price=current_price,
         previous_price=previous_price,
-        price_dropped=price_dropped,
+        price_dropped=significant,
+        change=amount,
     )
-
-    # 4. Update product's current price and last-checked timestamp
-    update_product(record["id"], current_price)
+    update_product(
+        existing["id"],
+        current_price,
+        further_reduction=significant,
+        monitor=True,
+    )
+    return "further_reduction" if significant else "checked"
 
 
 def main() -> None:
-    """Run the price check for all products in Airtable."""
+    """Scan the short-dated collection and record further markdowns."""
     log.info("=== Feast Italy Price Monitor ===")
     config.validate_required_config()
+    log.info(
+        "Collection: %s | significant drop: >= %.1f%% and >= %.2f",
+        config.COLLECTION_HANDLE,
+        config.SIGNIFICANT_DROP_PERCENT,
+        config.SIGNIFICANT_DROP_AMOUNT,
+    )
 
-    products = get_monitored_products()
-    log.info("Found %d monitored product(s) to check.", len(products))
+    collection = fetch_collection_products(config.COLLECTION_HANDLE)
+    log.info("Found %d product(s) on Shopify.", len(collection))
 
-    if not products:
-        log.warning("No monitored products found. Tick the 'Monitor' checkbox in the '%s' table.", config.PRODUCTS_TABLE)
+    if not collection:
+        log.warning("Collection is empty. Nothing to check.")
         return
 
+    existing_by_handle = products_by_handle()
+    added = 0
+    reductions = 0
+    checked = 0
     errors = 0
-    for record in products:
-        try:
-            check_product(record)
-        except Exception as exc:
-            name = record.get("fields", {}).get("Name", record["id"])
-            log.error("Error checking '%s': %s", name, exc, exc_info=True)
-            errors += 1
 
-    log.info("Done. Checked %d product(s), %d error(s).", len(products), errors)
+    for product in collection:
+        try:
+            result = scan_collection_product(
+                product,
+                existing_by_handle.get(product.handle),
+            )
+        except Exception as exc:
+            log.error("Error checking '%s': %s", product.title, exc, exc_info=True)
+            errors += 1
+            continue
+
+        if result == "added":
+            added += 1
+        elif result == "further_reduction":
+            reductions += 1
+        else:
+            checked += 1
+
+    log.info(
+        "Done. %d added, %d further reduction(s), %d unchanged, %d error(s).",
+        added,
+        reductions,
+        checked,
+        errors,
+    )
 
     if errors:
         sys.exit(1)
@@ -111,14 +176,12 @@ def check_config() -> None:
     """Validate required env vars and Shopify connectivity (preflight)."""
     config.validate_required_config()
     log.info("Config OK: Airtable base %s", config.AIRTABLE_BASE_ID)
-    # Light Shopify reachability check via a known product handle shape
-    from scraper import fetch_collection_products
-
-    products = fetch_collection_products("short-dated-but-delicious")
+    products = fetch_collection_products(config.COLLECTION_HANDLE)
     log.info(
-        "Shopify OK: %s — %d product(s) in short-dated-but-delicious",
+        "Shopify OK: %s — %d product(s) in %s",
         config.SHOPIFY_STORE_DOMAIN,
         len(products),
+        config.COLLECTION_HANDLE,
     )
 
 

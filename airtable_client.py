@@ -48,16 +48,28 @@ def get_product_by_handle(handle: str) -> Optional[dict]:
     return records[0] if records else None
 
 
+def products_by_handle() -> dict[str, dict]:
+    """Index every product that has a Shopify Handle."""
+    indexed: dict[str, dict] = {}
+    for record in get_all_products():
+        handle = record.get("fields", {}).get("Shopify Handle")
+        if handle:
+            indexed[handle] = record
+    return indexed
+
+
 def upsert_product(
     name: str,
     handle: str,
     url: str,
     price: float,
     vendor: str = "",
+    monitor: bool = True,
 ) -> tuple[dict, bool]:
     """Create a product if it doesn't exist, or return the existing record.
 
-    New products are created with Monitor unchecked so the user can opt in.
+    New collection products are created with Monitor checked so later scans
+    can detect a further markdown against this first-seen price.
 
     Returns:
         A tuple of (record, created).
@@ -71,6 +83,7 @@ def upsert_product(
         "Shopify Handle": handle,
         "URL": url,
         "Current Price": price,
+        "Monitor": monitor,
     }
     if vendor:
         fields["Vendor"] = vendor
@@ -83,6 +96,8 @@ def upsert_product(
             "Name": name,
             "Shopify Handle": handle,
             "URL": url,
+            "Current Price": price,
+            "Monitor": monitor,
         }), True
 
 
@@ -91,16 +106,23 @@ def _format_date(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
-def update_product(record_id: str, price: float, checked_at: datetime = None):
-    """Update a product's Current Price and Last Checked timestamp.
-
-    Only writes fields that exist in the table; silently skips missing fields.
-    """
+def update_product(
+    record_id: str,
+    price: float,
+    checked_at: datetime = None,
+    further_reduction: Optional[bool] = None,
+    monitor: Optional[bool] = None,
+):
+    """Update a product's Current Price, Last Checked, and reduction flag."""
     checked_at = checked_at or datetime.now(timezone.utc)
-    fields = {}
-    # These fields are optional — only set if they exist in the table
-    fields["Current Price"] = price
-    fields["Last Checked"] = _format_date(checked_at)
+    fields = {
+        "Current Price": price,
+        "Last Checked": _format_date(checked_at),
+    }
+    if further_reduction is not None:
+        fields["Further Reduction"] = further_reduction
+    if monitor is not None:
+        fields["Monitor"] = monitor
     try:
         _products_table().update(record_id, fields)
     except Exception as exc:
@@ -117,6 +139,7 @@ def log_price_check(
     price: float,
     previous_price: Optional[float],
     price_dropped: bool = False,
+    change: Optional[float] = None,
     checked_at: datetime = None,
 ) -> dict:
     """Create a new row in the Price History table.
@@ -142,5 +165,7 @@ def log_price_check(
     }
     if previous_price is not None:
         fields["Previous Price"] = previous_price
+    if change is not None:
+        fields["Change"] = change
 
     return _price_history_table().create(fields)

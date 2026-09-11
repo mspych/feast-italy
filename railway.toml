@@ -4,5 +4,5 @@ builder = "NIXPACKS"
 [deploy]
 # One-shot cron worker: run and exit; do not restart on failure.
 restartPolicyType = "NEVER"
-# Every 6 hours at minute 0
-cronSchedule = "0 */6 * * *"
+# Twice daily: 08:00 and 16:00 UTC (09:00/17:00 UK in BST, 08:00/16:00 UK in GMT)
+cronSchedule = "0 8,16 * * *"
